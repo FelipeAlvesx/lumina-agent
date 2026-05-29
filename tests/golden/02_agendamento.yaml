@@ -1,0 +1,26 @@
+name: Agendamento completo após qualificação
+messages:
+  - role: user
+    text: "Oi, quero agendar uma limpeza de pele. Sou a Ana, vi vocês no Google."
+  - role: agent
+    expect_tool_calls:
+      - save_lead_field
+
+  - role: user
+    text: "Isso mesmo, limpeza de pele profunda"
+  - role: agent
+    expect_tool_calls:
+      - mark_lead_complete
+
+  - role: user
+    text: "Pode ser semana que vem de manhã?"
+  - role: agent
+    expect_tool_calls:
+      - list_available_slots
+
+  - role: user
+    text: "Segunda às 9h serve"
+  - role: agent
+    expect_tool_calls:
+      - create_pending_appointment
+    expect_text_contains: "registrei"

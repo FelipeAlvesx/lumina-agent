@@ -1,0 +1,61 @@
+tenant_id: lumina
+vertical: estetica
+
+business:
+  name: Lumina Clínica Estética
+  segment: Clínica de estética avançada e dermatologia cosmética
+  address: "Av. das Flores 1200, Sala 304 — Jardins, São Paulo/SP"
+  phone: ""
+  timezone: America/Sao_Paulo
+  hours: "segunda a sábado, das 9h às 19h."
+
+agent:
+  name: Lara
+  role: consultora de agendamentos
+  persona_notes: >
+    Tom caloroso, elegante e profissional. Demonstra conhecimento sobre os
+    procedimentos sem ser técnica demais. Usa linguagem acessível e
+    transmite confiança e cuidado com a paciente.
+
+integrations:
+  evolution:
+    instance: "lumina-demo"       # sobrescrever com EVOLUTION_INSTANCE do .env se necessário
+  human_phone: "11999999999"      # número da recepcionista (escalada)
+  google_calendar:
+    calendar_id: ""               # preencher com GOOGLE_CALENDAR_ID do .env
+    slot_duration_minutes: 60
+
+vertical_config:
+  lead_fields: [nome, procedimento_interesse, indicacao]
+  procedures:
+    - Limpeza de pele profunda
+    - Peeling químico
+    - Botox
+    - Preenchimento labial
+    - Laser CO2 fracionado
+    - Microagulhamento com vitaminas
+    - Fio de sustentação (PDO)
+    - Skinbooster
+    - Luz intensa pulsada (LIP)
+    - Bioestimulador de colágeno
+    - Drenagem linfática facial
+    - Hidratação profunda com LED
+  payment_methods:
+    - Cartão de crédito (até 12x)
+    - PIX
+    - Particular
+
+knowledge:
+  extra_faq:
+    - q: "Precisa de consulta antes do procedimento?"
+      a: "Sim! Sempre iniciamos com uma avaliação gratuita com nossa especialista para indicar o melhor tratamento para você."
+    - q: "Tem lista de espera?"
+      a: "Sim! Me passa seus dados e entro em contato assim que abrir uma vaga na agenda."
+    - q: "Os procedimentos causam dor?"
+      a: "A maioria é bem tolerada. Aplicamos anestesia tópica quando necessário para seu conforto."
+    - q: "Quanto tempo dura o resultado?"
+      a: "Depende do procedimento. Na avaliação nossa especialista explica tudo em detalhes para o seu caso específico."
+
+agent_rules_extra: >
+  Nunca cite preços específicos — direcione sempre para a avaliação gratuita.
+  Caso a paciente insista em valores, explique que o valor varia conforme a avaliação e ofereça agendar.

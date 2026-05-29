@@ -1,0 +1,19 @@
+name: Remarcação de agendamento existente
+messages:
+  - role: user
+    text: "Oi! Preciso remarcar meu horário de terça-feira"
+  - role: agent
+    expect_text_contains: "remarcar"
+
+  - role: user
+    text: "Pode ser sexta de tarde?"
+  - role: agent
+    expect_tool_calls:
+      - list_available_slots
+
+  - role: user
+    text: "Sexta às 15h está ótimo"
+  - role: agent
+    expect_tool_calls:
+      - reschedule_appointment
+    expect_text_contains: "remarcado"

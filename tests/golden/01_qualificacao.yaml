@@ -1,0 +1,25 @@
+name: Qualificação completa de lead
+messages:
+  - role: user
+    text: "Oi, vi vocês no Instagram e fiquei curiosa!"
+  - role: agent
+    expect_text_contains: "bem-vinda"
+
+  - role: user
+    text: "Tenho interesse em botox"
+  - role: agent
+    expect_tool_calls:
+      - save_lead_field
+
+  - role: user
+    text: "Me chamo Mariana"
+  - role: agent
+    expect_tool_calls:
+      - save_lead_field
+
+  - role: user
+    text: "Fui indicada pela minha amiga Carla"
+  - role: agent
+    expect_tool_calls:
+      - save_lead_field
+      - mark_lead_complete
