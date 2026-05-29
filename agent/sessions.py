@@ -12,6 +12,29 @@ DB_PATH = os.getenv("DB_PATH", "/app/data/sessions.db")
 TTL_SECONDS = 30 * 60
 MAX_TURNS = 10
 
+_INITIAL_SERVICES = [
+    ("Faciais & Limpeza", "Limpeza de pele profunda",       60,  180.0),
+    ("Faciais & Limpeza", "Peeling químico",                45,  220.0),
+    ("Faciais & Limpeza", "Drenagem linfática facial",      60,  150.0),
+    ("Faciais & Limpeza", "Hidratação profunda com LED",    60,  200.0),
+    ("Rejuvenescimento",  "Botox",                          45,  800.0),
+    ("Rejuvenescimento",  "Preenchimento labial",           60,  950.0),
+    ("Rejuvenescimento",  "Fio de sustentação (PDO)",       90, 2500.0),
+    ("Rejuvenescimento",  "Skinbooster",                    45,  650.0),
+    ("Rejuvenescimento",  "Bioestimulador de colágeno",     60, 1200.0),
+    ("Laser & Luz",       "Laser CO2 fracionado",           60, 1500.0),
+    ("Laser & Luz",       "Microagulhamento com vitaminas", 60,  350.0),
+    ("Laser & Luz",       "Luz intensa pulsada (LIP)",      45,  450.0),
+]
+
+_INITIAL_PROFESSIONALS = [
+    ("Dra. Sofia Mendes",  "Dermatologista",           "SM", "#7C3D6E", 4.9, 34, 5),
+    ("Dra. Carla Ribeiro", "Esteticista Especialista", "CR", "#2D6E7C", 4.8, 28, 8),
+    ("Dr. Lucas Mendonça", "Bioestimuladores",         "LM", "#2D7C3D", 4.7, 21, 4),
+]
+
+_seeded = False
+
 
 def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -64,8 +87,51 @@ def _get_conn() -> sqlite3.Connection:
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_esc_phone ON escalations(phone)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS services (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT    NOT NULL,
+            name     TEXT    NOT NULL,
+            duration INTEGER NOT NULL DEFAULT 60,
+            price    REAL    NOT NULL DEFAULT 0,
+            active   INTEGER NOT NULL DEFAULT 1
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS professionals (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            name               TEXT    NOT NULL,
+            specialty          TEXT    NOT NULL DEFAULT '',
+            initials           TEXT    NOT NULL DEFAULT '',
+            color              TEXT    NOT NULL DEFAULT '#7C3D6E',
+            rating             REAL    NOT NULL DEFAULT 5.0,
+            appointments_count INTEGER NOT NULL DEFAULT 0,
+            services_count     INTEGER NOT NULL DEFAULT 0,
+            active             INTEGER NOT NULL DEFAULT 1
+        )
+    """)
     conn.commit()
+    global _seeded
+    if not _seeded:
+        _seed_default_data(conn)
+        _seeded = True
     return conn
+
+
+def _seed_default_data(conn: sqlite3.Connection) -> None:
+    if conn.execute("SELECT COUNT(*) FROM services").fetchone()[0] == 0:
+        conn.executemany(
+            "INSERT INTO services (category, name, duration, price, active) VALUES (?, ?, ?, ?, 1)",
+            _INITIAL_SERVICES,
+        )
+    if conn.execute("SELECT COUNT(*) FROM professionals").fetchone()[0] == 0:
+        conn.executemany(
+            """INSERT INTO professionals
+               (name, specialty, initials, color, rating, appointments_count, services_count, active)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
+            _INITIAL_PROFESSIONALS,
+        )
+    conn.commit()
 
 
 # ── Session history ───────────────────────────────────────────────────────────
@@ -284,6 +350,98 @@ def log_escalation(phone: str, reason: str = "") -> None:
     )
     conn.commit()
     conn.close()
+
+
+# ── Stats for dashboard ───────────────────────────────────────────────────────
+
+# ── Services ─────────────────────────────────────────────────────────────────
+
+def get_all_services() -> list[dict]:
+    conn = _get_conn()
+    cur = conn.execute("SELECT * FROM services ORDER BY category, name")
+    result = _rows_to_dicts(cur, cur.fetchall())
+    conn.close()
+    return result
+
+
+def create_service(category: str, name: str, duration: int, price: float, active: bool = True) -> int:
+    conn = _get_conn()
+    cur = conn.execute(
+        "INSERT INTO services (category, name, duration, price, active) VALUES (?, ?, ?, ?, ?)",
+        (category, name, duration, price, int(active)),
+    )
+    conn.commit()
+    sid = cur.lastrowid
+    conn.close()
+    return sid
+
+
+def update_service(service_id: int, **fields) -> bool:
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [service_id]
+    conn = _get_conn()
+    cursor = conn.execute(f"UPDATE services SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+    conn.close()
+    return cursor.rowcount > 0
+
+
+def delete_service(service_id: int) -> bool:
+    conn = _get_conn()
+    cursor = conn.execute("DELETE FROM services WHERE id = ?", (service_id,))
+    conn.commit()
+    conn.close()
+    return cursor.rowcount > 0
+
+
+# ── Professionals ─────────────────────────────────────────────────────────────
+
+def get_all_professionals() -> list[dict]:
+    conn = _get_conn()
+    cur = conn.execute("SELECT * FROM professionals ORDER BY name")
+    result = _rows_to_dicts(cur, cur.fetchall())
+    conn.close()
+    return result
+
+
+def create_professional(
+    name: str, specialty: str, initials: str, color: str,
+    rating: float, appointments_count: int = 0, services_count: int = 0,
+    active: bool = True,
+) -> int:
+    conn = _get_conn()
+    cur = conn.execute(
+        """INSERT INTO professionals
+           (name, specialty, initials, color, rating, appointments_count, services_count, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (name, specialty, initials, color, rating, appointments_count, services_count, int(active)),
+    )
+    conn.commit()
+    pid = cur.lastrowid
+    conn.close()
+    return pid
+
+
+def update_professional(professional_id: int, **fields) -> bool:
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [professional_id]
+    conn = _get_conn()
+    cursor = conn.execute(f"UPDATE professionals SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+    conn.close()
+    return cursor.rowcount > 0
+
+
+def delete_professional(professional_id: int) -> bool:
+    conn = _get_conn()
+    cursor = conn.execute("DELETE FROM professionals WHERE id = ?", (professional_id,))
+    conn.commit()
+    conn.close()
+    return cursor.rowcount > 0
 
 
 # ── Stats for dashboard ───────────────────────────────────────────────────────

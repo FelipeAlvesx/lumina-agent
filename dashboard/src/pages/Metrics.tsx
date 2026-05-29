@@ -15,9 +15,9 @@ export function Metrics() {
 
   const funnelData = stats
     ? [
-        { name: 'Sessões', value: stats.total_sessions, fill: '#7C3D6E' },
-        { name: 'Leads qualificados', value: stats.qualified_leads, fill: '#9B5089' },
-        { name: 'Agendamentos', value: stats.appointments_scheduled, fill: '#C5A87D' },
+        { name: 'Sessões', value: stats.leads_total, fill: '#7C3D6E' },
+        { name: 'Leads qualificados', value: stats.leads_qualified, fill: '#9B5089' },
+        { name: 'Agendamentos', value: stats.appointments_total, fill: '#C5A87D' },
         { name: 'Confirmados', value: stats.appointments_confirmed, fill: '#D4BB99' },
       ]
     : []

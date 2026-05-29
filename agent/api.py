@@ -6,17 +6,36 @@ Registre este blueprint no main.py via app.register_blueprint(api_bp).
 from flask import Blueprint, jsonify, request
 
 import os
+import yaml as _yaml
 
 from sessions import (
     get_stats, get_all_leads, get_all_appointments,
-    get_history, get_appointment, update_appointment,
+    get_history, get_appointment, update_appointment, create_appointment,
+    get_all_services, create_service, update_service, delete_service,
+    get_all_professionals, create_professional, update_professional, delete_professional,
 )
 from gcal import confirm_event, confirm_event_with_new_slot, delete_event
 from evolution import send_message
 from config import get_config
+import config as _config_module
 from verticals.estetica.tools import slot_label
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+def _map_apt(apt: dict) -> dict:
+    """Normaliza campos do DB para o contrato esperado pelo dashboard."""
+    return {
+        "id":         apt["id"],
+        "phone":      apt["phone"],
+        "nome":       apt.get("patient_name") or "",
+        "procedure":  apt.get("procedure_type") or "",
+        "datetime":   apt.get("slot_start") or "",
+        "slot_end":   apt.get("slot_end") or "",
+        "status":     apt["status"],
+        "notes":      apt.get("notes") or "",
+        "created_at": apt.get("created_at") or "",
+    }
 
 
 def _cors(response):
@@ -48,20 +67,50 @@ def leads():
     return jsonify({"leads": data, "count": len(data)})
 
 
-@api_bp.route("/appointments", methods=["GET", "OPTIONS"])
+@api_bp.route("/appointments", methods=["GET", "POST", "OPTIONS"])
 def appointments():
     if request.method == "OPTIONS":
         return _cors(jsonify({}))
-    status    = request.args.get("status") or None
-    date_from = request.args.get("date_from") or None
-    date_to   = request.args.get("date_to") or None
-    limit     = int(request.args.get("limit", 50))
-    offset    = int(request.args.get("offset", 0))
-    data      = get_all_appointments(
-        status=status, date_from=date_from, date_to=date_to,
-        limit=limit, offset=offset,
-    )
-    return jsonify({"appointments": data, "count": len(data)})
+
+    if request.method == "GET":
+        status    = request.args.get("status") or None
+        date_from = request.args.get("date_from") or None
+        date_to   = request.args.get("date_to") or None
+        limit     = int(request.args.get("limit", 50))
+        offset    = int(request.args.get("offset", 0))
+        data      = get_all_appointments(
+            status=status, date_from=date_from, date_to=date_to,
+            limit=limit, offset=offset,
+        )
+        return jsonify({"appointments": [_map_apt(a) for a in data], "count": len(data)})
+
+    # POST — criação manual de agendamento pelo dashboard
+    body      = request.get_json(force=True) or {}
+    phone     = body.get("phone", "").strip()
+    nome      = body.get("nome", "").strip()
+    procedure = body.get("procedure", "").strip()
+    slot_start = body.get("slot_start", "").strip()
+    slot_end   = body.get("slot_end", "").strip()
+    notes      = body.get("notes", "")
+    status_val = body.get("status", "confirmed")
+
+    if not all([phone, nome, procedure, slot_start]):
+        return jsonify({"error": "Campos obrigatórios: phone, nome, procedure, slot_start"}), 400
+
+    if not slot_end:
+        from datetime import datetime, timedelta
+        try:
+            dt = datetime.fromisoformat(slot_start)
+            slot_end = (dt + timedelta(hours=1)).isoformat()
+        except ValueError:
+            slot_end = slot_start
+
+    apt_id = create_appointment(phone, nome, procedure, slot_start, slot_end, notes)
+
+    if status_val == "confirmed":
+        update_appointment(apt_id, status="confirmed")
+
+    return jsonify({"id": apt_id, "ok": True}), 201
 
 
 @api_bp.route("/conversations/<phone>", methods=["GET", "OPTIONS"])
@@ -182,6 +231,110 @@ def reject_appointment(appointment_id: int):
         return jsonify({"ok": True, "status": "confirmed"})
 
     return jsonify({"error": f"Status '{status}' não permite rejeição"}), 400
+
+
+@api_bp.route("/services", methods=["GET", "POST", "OPTIONS"])
+def services_list():
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+    if request.method == "GET":
+        return jsonify({"services": get_all_services()})
+    data = request.get_json(force=True) or {}
+    sid = create_service(
+        category=data.get("category", ""),
+        name=data.get("name", ""),
+        duration=int(data.get("duration", 60)),
+        price=float(data.get("price", 0)),
+        active=bool(data.get("active", True)),
+    )
+    return jsonify({"id": sid, "ok": True}), 201
+
+
+@api_bp.route("/services/<int:service_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def service_detail(service_id: int):
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+    if request.method == "DELETE":
+        ok = delete_service(service_id)
+        return (jsonify({"ok": True}), 200) if ok else (jsonify({"error": "Não encontrado"}), 404)
+    data = request.get_json(force=True) or {}
+    allowed = {"category", "name", "duration", "price", "active"}
+    fields = {k: v for k, v in data.items() if k in allowed}
+    if "active" in fields:
+        fields["active"] = int(bool(fields["active"]))
+    ok = update_service(service_id, **fields)
+    return (jsonify({"ok": True}), 200) if ok else (jsonify({"error": "Não encontrado"}), 404)
+
+
+@api_bp.route("/professionals", methods=["GET", "POST", "OPTIONS"])
+def professionals_list():
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+    if request.method == "GET":
+        return jsonify({"professionals": get_all_professionals()})
+    data = request.get_json(force=True) or {}
+    pid = create_professional(
+        name=data.get("name", ""),
+        specialty=data.get("specialty", ""),
+        initials=data.get("initials", ""),
+        color=data.get("color", "#7C3D6E"),
+        rating=float(data.get("rating", 5.0)),
+        appointments_count=int(data.get("appointments_count", 0)),
+        services_count=int(data.get("services_count", 0)),
+        active=bool(data.get("active", True)),
+    )
+    return jsonify({"id": pid, "ok": True}), 201
+
+
+@api_bp.route("/professionals/<int:professional_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def professional_detail(professional_id: int):
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+    if request.method == "DELETE":
+        ok = delete_professional(professional_id)
+        return (jsonify({"ok": True}), 200) if ok else (jsonify({"error": "Não encontrado"}), 404)
+    data = request.get_json(force=True) or {}
+    allowed = {"name", "specialty", "initials", "color", "rating",
+               "appointments_count", "services_count", "active"}
+    fields = {k: v for k, v in data.items() if k in allowed}
+    if "active" in fields:
+        fields["active"] = int(bool(fields["active"]))
+    ok = update_professional(professional_id, **fields)
+    return (jsonify({"ok": True}), 200) if ok else (jsonify({"error": "Não encontrado"}), 404)
+
+
+@api_bp.route("/config", methods=["GET", "PUT", "OPTIONS"])
+def tenant_config():
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+    if request.method == "GET":
+        cfg = get_config()
+        return jsonify({
+            "name":       cfg.name,
+            "segment":    cfg.segment,
+            "address":    cfg.address,
+            "phone":      cfg.phone,
+            "hours":      cfg.hours,
+            "timezone":   cfg.timezone,
+            "agent_name": cfg.agent_name,
+        })
+    # PUT — update tenant YAML and reload in-memory singleton
+    data = request.get_json(force=True) or {}
+    tenant_path = os.getenv("TENANT_CONFIG")
+    if not tenant_path:
+        return jsonify({"error": "TENANT_CONFIG não configurado"}), 500
+    with open(tenant_path, encoding="utf-8") as f:
+        raw = _yaml.safe_load(f)
+    biz = raw.setdefault("business", {})
+    for k in ("name", "segment", "address", "phone", "hours", "timezone"):
+        if k in data:
+            biz[k] = data[k]
+    if "agent_name" in data:
+        raw.setdefault("agent", {})["name"] = data["agent_name"]
+    with open(tenant_path, "w", encoding="utf-8") as f:
+        _yaml.dump(raw, f, allow_unicode=True, default_flow_style=False)
+    _config_module._config = None  # force reload on next get_config()
+    return jsonify({"ok": True})
 
 
 @api_bp.route("/test/message", methods=["POST", "OPTIONS"])

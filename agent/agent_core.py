@@ -49,7 +49,7 @@ errors_total               = Counter("errors_total",               "Erros no pro
 llm_latency_seconds        = Histogram("llm_latency_seconds",      "Latência das chamadas Claude")
 
 _anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-_whisper_client   = _OpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy"))
+_whisper_client   = _OpenAI(api_key=os.getenv("OPENAI_API_KEY") or "dummy")
 
 _CLAUDE_MODEL = get_config().model
 SYSTEM_PROMPT = build_system_prompt(get_config())
