@@ -1,6 +1,10 @@
 tenant_id: lumina
 vertical: estetica
 
+# Modelo padrão da demo. Sonnet entrega fluidez "humana" para venda ao vivo.
+# Precedência: env CLAUDE_MODEL > este campo > default (Haiku, p/ economia em produção).
+model: claude-sonnet-4-6
+
 business:
   name: Lumina Clínica Estética
   segment: Clínica de estética avançada e dermatologia cosmética
@@ -23,7 +27,21 @@ integrations:
   human_phone: "11999999999"      # número da recepcionista (escalada)
   google_calendar:
     calendar_id: ""               # preencher com GOOGLE_CALENDAR_ID do .env
-    slot_duration_minutes: 60
+    slot_duration_minutes: 60     # fallback quando procedimento não mapeado
+    slot_buffer_minutes: 15       # intervalo de limpeza/preparo entre atendimentos
+    procedure_durations:
+      Limpeza de pele profunda: 60
+      Peeling químico: 45
+      Botox: 30
+      Preenchimento labial: 45
+      Laser CO2 fracionado: 90
+      Microagulhamento com vitaminas: 60
+      Fio de sustentação (PDO): 90
+      Skinbooster: 45
+      Luz intensa pulsada (LIP): 60
+      Bioestimulador de colágeno: 60
+      Drenagem linfática facial: 60
+      Hidratação profunda com LED: 45
 
 vertical_config:
   lead_fields: [nome, procedimento_interesse, indicacao]

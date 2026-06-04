@@ -227,6 +227,14 @@ def _send_daily_reminders() -> None:
 
 if __name__ == "__main__":
     log.info("agent_starting", port=3000)
+
+    if os.getenv("DEMO_SEED", "").lower() in ("true", "1", "yes"):
+        try:
+            from seed_demo import run_seed
+            run_seed()
+        except Exception as e:
+            log.warning("demo_seed_failed", error=str(e))
+
     threading.Thread(target=register_webhook, daemon=True).start()
 
     scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")

@@ -91,7 +91,7 @@ export function Contacts() {
               )}
               {filtered.map((lead: Lead) => (
                 <tr
-                  key={lead.id}
+                  key={lead.phone}
                   onClick={() => navigate(`/conversas?phone=${encodeURIComponent(lead.phone)}`)}
                   className="border-b border-gray-50 hover:bg-surface-2 transition-colors duration-150 cursor-pointer group"
                 >
@@ -99,7 +99,7 @@ export function Contacts() {
                     <div className="flex items-center gap-3">
                       <div
                         className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0 transition-transform duration-200 group-hover:scale-110"
-                        style={{ background: avatarColor(lead.id) }}
+                        style={{ background: avatarColor(parseInt(lead.phone.replace(/\D/g, '').slice(-6), 10) || 0) }}
                       >
                         {initials(lead.nome, lead.phone)}
                       </div>

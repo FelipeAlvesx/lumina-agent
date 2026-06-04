@@ -1,104 +1,242 @@
+import { useMemo } from 'react'
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  FunnelChart, Funnel, LabelList, Cell,
-  PieChart, Pie, Legend,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  FunnelChart, Funnel, LabelList,
+  PieChart, Pie,
 } from 'recharts'
+import { parseISO, getHours } from 'date-fns'
 import { api } from '../lib/api'
 import { useFetch } from '../hooks/useFetch'
 
-const COLORS = ['#7C3D6E', '#C5A87D', '#9B5089', '#D4BB99', '#5E2D53']
+const PRIMARY   = '#7C3D6E'
+const GOLD      = '#C5A87D'
+const COLORS    = [PRIMARY, GOLD, '#9B5089', '#D4BB99', '#5E2D53', '#2D6E7C']
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="bg-white border border-gray-100 shadow-lg rounded-xl px-3 py-2 text-xs">
+      <p className="font-semibold text-gray-600 mb-1">{label}</p>
+      {payload.map((p: any) => (
+        <p key={p.dataKey} style={{ color: p.color ?? PRIMARY }} className="font-medium">
+          {p.name}: {p.value}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  pending:              'Pendente',
+  confirmed:            'Confirmado',
+  rejected:             'Rejeitado',
+  cancelled:            'Cancelado',
+  reschedule_requested: 'Remarcação',
+  cancel_requested:     'Cancelamento',
+}
+
+const HOUR_LABELS = ['9h','10h','11h','12h','13h','14h','15h','16h','17h','18h']
 
 export function Metrics() {
-  const { data: stats } = useFetch(() => api.getStats())
-  const { data: leads } = useFetch(() => api.getLeads({ limit: 500 }))
+  const { data: stats }        = useFetch(() => api.getStats())
+  const { data: leads }        = useFetch(() => api.getLeads({ limit: 500 }))
   const { data: appointments } = useFetch(() => api.getAppointments())
 
-  const funnelData = stats
-    ? [
-        { name: 'Sessões', value: stats.leads_total, fill: '#7C3D6E' },
-        { name: 'Leads qualificados', value: stats.leads_qualified, fill: '#9B5089' },
-        { name: 'Agendamentos', value: stats.appointments_total, fill: '#C5A87D' },
-        { name: 'Confirmados', value: stats.appointments_confirmed, fill: '#D4BB99' },
-      ]
-    : []
+  /* Funil */
+  const funnelData = stats ? [
+    { name: 'Contatos',          value: stats.leads_total,            fill: PRIMARY },
+    { name: 'Qualificados',      value: stats.leads_qualified,        fill: '#9B5089' },
+    { name: 'Agendamentos',      value: stats.appointments_total,     fill: GOLD },
+    { name: 'Confirmados',       value: stats.appointments_confirmed, fill: '#D4BB99' },
+  ] : []
 
-  const procedureCounts: Record<string, number> = {}
-  for (const lead of leads ?? []) {
-    if (lead.procedimento_interesse) {
-      procedureCounts[lead.procedimento_interesse] = (procedureCounts[lead.procedimento_interesse] ?? 0) + 1
+  /* Procedimentos */
+  const procedureData = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const l of leads ?? []) {
+      if (l.procedimento_interesse)
+        counts[l.procedimento_interesse] = (counts[l.procedimento_interesse] ?? 0) + 1
     }
-  }
-  const procedureData = Object.entries(procedureCounts).map(([name, value]) => ({ name, value }))
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, value]) => ({ name, value }))
+  }, [leads])
 
-  const statusCounts: Record<string, number> = {}
-  for (const apt of appointments ?? []) {
-    statusCounts[apt.status] = (statusCounts[apt.status] ?? 0) + 1
-  }
-  const statusData = Object.entries(statusCounts).map(([name, value]) => ({ name, value }))
+  /* Status dos agendamentos */
+  const statusData = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const a of appointments ?? []) counts[a.status] = (counts[a.status] ?? 0) + 1
+    return Object.entries(counts).map(([status, value]) => ({
+      name: STATUS_LABEL[status] ?? status, value,
+    }))
+  }, [appointments])
+
+  /* Horários de pico (por hora) */
+  const peakHourData = useMemo(() => {
+    const counts: Record<number, number> = {}
+    for (const l of leads ?? []) {
+      if (!l.created_at) continue
+      try { const h = getHours(parseISO(l.created_at)); counts[h] = (counts[h] ?? 0) + 1 } catch { /* */ }
+    }
+    return HOUR_LABELS.map((label, i) => ({ label, contatos: counts[9 + i] ?? 0 }))
+  }, [leads])
+
+  /* Indicação / fonte */
+  const sourceData = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const l of leads ?? []) {
+      if (l.indicacao) counts[l.indicacao] = (counts[l.indicacao] ?? 0) + 1
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }))
+  }, [leads])
+
+  /* Taxa de conversão e escalação */
+  const convRate = stats && stats.leads_total > 0
+    ? Math.round((stats.appointments_total / stats.leads_total) * 100) : 0
+  const qualRate = stats && stats.leads_total > 0
+    ? Math.round((stats.leads_qualified / stats.leads_total) * 100) : 0
+  const escRate = stats && stats.leads_total > 0
+    ? Math.round((stats.escalations_total / stats.leads_total) * 100) : 0
+
+  const isEmpty = !stats || stats.leads_total === 0
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-semibold text-gray-900">Métricas</h1>
+    <div className="space-y-6 animate-fade-in pb-8">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Métricas</h1>
+        <p className="text-sm text-gray-400 mt-0.5">Performance do agente Lara</p>
+      </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: 'Taxa de qualificação', value: `${qualRate}%`, sub: 'contatos → qualificados', color: PRIMARY },
+          { label: 'Taxa de conversão',    value: `${convRate}%`, sub: 'contatos → agendamentos', color: GOLD },
+          { label: 'Agendamentos',         value: stats?.appointments_total ?? 0,   sub: 'total gerados', color: PRIMARY },
+          { label: 'Escalações',           value: `${escRate}%`, sub: `${stats?.escalations_total ?? 0} total`, color: '#D97706' },
+        ].map(k => (
+          <div key={k.label} className="card flex flex-col gap-1.5">
+            <p className="text-xs text-gray-400 font-medium">{k.label}</p>
+            <p className="text-3xl font-bold" style={{ color: k.color }}>{k.value}</p>
+            <p className="text-xs text-gray-400">{k.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Funil + procedimentos */}
+      <div className="grid lg:grid-cols-2 gap-4">
         <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">Funil de conversão</h2>
-          <ResponsiveContainer width="100%" height={260}>
-            <FunnelChart>
-              <Tooltip />
-              <Funnel dataKey="value" data={funnelData} isAnimationActive>
-                <LabelList position="right" fill="#374151" stroke="none" dataKey="name" />
-              </Funnel>
-            </FunnelChart>
-          </ResponsiveContainer>
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Funil de conversão</h2>
+          <p className="text-xs text-gray-400 mb-4">Contatos → Qualificados → Agendados → Confirmados</p>
+          {isEmpty ? (
+            <div className="h-52 flex items-center justify-center text-sm text-gray-300">Sem dados ainda</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <FunnelChart>
+                <Tooltip content={<CustomTooltip />} />
+                <Funnel dataKey="value" data={funnelData} isAnimationActive animationBegin={200} animationDuration={800}>
+                  <LabelList position="right" fill="#374151" stroke="none" dataKey="name" style={{ fontSize: 11 }} />
+                  <LabelList position="center" fill="#fff" stroke="none" dataKey="value" style={{ fontSize: 12, fontWeight: 600 }} />
+                </Funnel>
+              </FunnelChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
         <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">Procedimentos de interesse</h2>
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Procedimentos mais solicitados</h2>
+          <p className="text-xs text-gray-400 mb-4">Por interesse declarado no WhatsApp</p>
           {procedureData.length === 0 ? (
-            <p className="text-sm text-gray-400">Sem dados ainda.</p>
+            <div className="h-52 flex items-center justify-center text-sm text-gray-300">Sem dados ainda</div>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={procedureData} layout="vertical">
-                <XAxis type="number" tick={{ fontSize: 12 }} />
-                <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                  {procedureData.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                  ))}
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={procedureData} layout="vertical" margin={{ left: 8, right: 20, top: 4, bottom: 4 }}>
+                <XAxis type="number" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis dataKey="name" type="category" width={160} tick={{ fontSize: 10, fill: '#374151' }} axisLine={false} tickLine={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="value" name="Contatos" radius={[0, 6, 6, 0]} isAnimationActive animationBegin={200}>
+                  {procedureData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Horários de pico + Fonte */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <div className="card">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Horários de pico</h2>
+          <p className="text-xs text-gray-400 mb-4">Contatos recebidos por hora do dia</p>
+          {isEmpty ? (
+            <div className="h-44 flex items-center justify-center text-sm text-gray-300">Sem dados ainda</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={peakHourData} margin={{ left: -16, right: 8, top: 4, bottom: 0 }}>
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="contatos" name="Contatos" radius={[4, 4, 0, 0]} fill={PRIMARY} isAnimationActive animationBegin={300} />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
 
         <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">Status dos agendamentos</h2>
-          {statusData.length === 0 ? (
-            <p className="text-sm text-gray-400">Sem dados ainda.</p>
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Canais de origem</h2>
+          <p className="text-xs text-gray-400 mb-4">Como as clientes chegaram à Lumina</p>
+          {sourceData.length === 0 ? (
+            <div className="h-44 flex items-center justify-center text-sm text-gray-300">Sem dados ainda</div>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie data={statusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
-                  {statusData.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Legend />
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            <>
+              <ResponsiveContainer width="100%" height={160}>
+                <PieChart>
+                  <Pie
+                    data={sourceData}
+                    cx="50%" cy="50%"
+                    outerRadius={68}
+                    dataKey="value"
+                    paddingAngle={2}
+                    isAnimationActive
+                    animationBegin={200}
+                    animationDuration={800}
+                    label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                    labelLine={false}
+                  >
+                    {sourceData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip content={<CustomTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex flex-wrap justify-center gap-3 mt-1">
+                {sourceData.map((d, i) => (
+                  <div key={d.name} className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
+                    <span className="text-xs text-gray-500">{d.name}</span>
+                    <span className="text-xs font-semibold text-gray-700">{d.value}</span>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
+      </div>
 
-        {stats && (
-          <div className="card flex flex-col justify-center items-center gap-2">
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Taxa de conversão geral</p>
-            <p className="text-5xl font-bold text-primary">
-              {(stats.conversion_rate * 100).toFixed(1)}%
-            </p>
-            <p className="text-xs text-gray-400">sessões → leads qualificados</p>
+      {/* Status dos agendamentos */}
+      <div className="card">
+        <h2 className="text-sm font-semibold text-gray-700 mb-4">Status dos agendamentos</h2>
+        {statusData.length === 0 ? (
+          <div className="h-20 flex items-center justify-center text-sm text-gray-300">Sem agendamentos</div>
+        ) : (
+          <div className="flex flex-wrap gap-4">
+            {statusData.map((d, i) => (
+              <div key={d.name} className="flex items-center gap-2 card py-2 px-4">
+                <span className="w-3 h-3 rounded-full shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
+                <span className="text-sm text-gray-600">{d.name}</span>
+                <span className="text-sm font-bold" style={{ color: COLORS[i % COLORS.length] }}>{d.value}</span>
+              </div>
+            ))}
           </div>
         )}
       </div>

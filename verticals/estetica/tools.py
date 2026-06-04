@@ -10,6 +10,7 @@ from sessions import (
     save_lead_field, is_lead_qualified, get_lead_data,
     get_patient_appointments, get_appointment,
     create_appointment, update_appointment,
+    save_offered_slots, clear_offered_slots,
 )
 from verticals.estetica.notifications import (
     notify_lead_qualified, notify_appointment_pending,
@@ -69,7 +70,7 @@ def get_tool_definitions(config) -> list:
             "description": (
                 "Consulta horários livres no calendário da clínica. "
                 "date_range deve ser ISO: '2026-05-01' (um dia) ou '2026-05-01/2026-05-07' (intervalo). "
-                "Retorna até 3 horários disponíveis com labels legíveis."
+                "Retorna até 3 horários disponíveis com labels legíveis, um por dia."
             ),
             "input_schema": {
                 "type": "object",
@@ -80,7 +81,12 @@ def get_tool_definitions(config) -> list:
                     },
                     "procedure_type": {
                         "type": "string",
-                        "description": "Tipo de procedimento (opcional)",
+                        "description": "Tipo de procedimento — define a duração do slot",
+                    },
+                    "period": {
+                        "type": "string",
+                        "enum": ["manha", "tarde"],
+                        "description": "Preferência de período: 'manha' (9h-12h) ou 'tarde' (13h-19h)",
                     },
                 },
                 "required": ["date_range"],
@@ -195,7 +201,14 @@ def execute_tool(fn: str, args: dict, context: dict) -> dict:
         date_range = args.get("date_range")
         if not isinstance(date_range, str) or not date_range.strip():
             return {"error": "date_range obrigatório (formato YYYY-MM-DD ou YYYY-MM-DD/YYYY-MM-DD)"}
-        result = gcal.list_available_slots(date_range, procedure_type=args.get("procedure_type"))
+        result = gcal.list_available_slots(
+            date_range,
+            procedure_type=args.get("procedure_type"),
+            period=args.get("period"),
+        )
+        if isinstance(result, dict) and result.get("slots"):
+            # Persiste os slots (com ISO) para a cliente poder escolher no próximo turno.
+            save_offered_slots(phone, result["slots"])
         log.info("slots_queried", phone_hash=phone_hash, date_range=date_range)
         return result
 
@@ -215,6 +228,7 @@ def execute_tool(fn: str, args: dict, context: dict) -> dict:
             update_appointment(apt_id, external_id=ext_id)
         notify_appointment_pending(apt_id, phone, patient_name, procedure_type, slot_label(slot_start, tz), notes)
         context.get("inc_appointments_created", lambda: None)()
+        clear_offered_slots(phone)
         log.info("appointment_created", phone_hash=phone_hash, appointment_id=apt_id)
         return {
             "ok": True,

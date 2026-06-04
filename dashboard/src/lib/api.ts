@@ -20,13 +20,12 @@ export interface Stats {
 }
 
 export interface Lead {
-  id: number
   phone: string
   nome: string | null
   procedimento_interesse: string | null
   indicacao: string | null
   qualified: boolean
-  created_at: string
+  created_at: string | null
 }
 
 export interface Appointment {
@@ -35,7 +34,10 @@ export interface Appointment {
   nome: string | null
   procedure: string
   datetime: string
-  status: 'pending' | 'confirmed' | 'rejected' | 'cancelled'
+  slot_end: string | null
+  new_slot_start: string | null
+  new_slot_end: string | null
+  status: 'pending' | 'confirmed' | 'rejected' | 'cancelled' | 'reschedule_requested' | 'cancel_requested'
   notes: string | null
   created_at: string
 }
@@ -44,6 +46,14 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+}
+
+export interface ConversationSummary {
+  phone: string
+  nome: string
+  last_message: string
+  last_role: 'user' | 'assistant'
+  last_ts: string | null
 }
 
 export interface Service {
@@ -99,6 +109,9 @@ export const api = {
     return request<{ appointments: Appointment[]; count: number }>(`/api/appointments?${qs}`).then((r) => r.appointments)
   },
 
+  getConversations: () =>
+    request<{ conversations: ConversationSummary[] }>('/api/conversations').then((r) => r.conversations),
+
   getConversation: (phone: string) =>
     request<{ phone: string; messages: Message[] }>(`/api/conversations/${encodeURIComponent(phone)}`).then((r) => r.messages),
 
@@ -107,6 +120,18 @@ export const api = {
 
   rejectAppointment: (id: number, reason?: string) =>
     request<{ ok: boolean }>(`/api/appointments/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  rescheduleAppointment: (id: number, new_slot_start: string, new_slot_end: string) =>
+    request<{ ok: boolean }>(`/api/appointments/${id}/reschedule`, {
+      method: 'POST',
+      body: JSON.stringify({ new_slot_start, new_slot_end }),
+    }),
+
+  cancelAppointment: (id: number, reason?: string) =>
+    request<{ ok: boolean }>(`/api/appointments/${id}/cancel`, {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),

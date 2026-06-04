@@ -43,28 +43,102 @@ def _parse_dt(iso: str) -> datetime:
     return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(get_config().tz)
 
 
-def list_available_slots(date_range: str, procedure_type: str | None = None) -> dict:
+def _resolve_duration(procedure_type: str | None, cfg) -> int:
+    """Retorna duração em minutos para o procedimento, com fallback para slot_duration."""
+    if procedure_type and cfg.procedure_durations:
+        proc_lower = procedure_type.lower()
+        for key, val in cfg.procedure_durations.items():
+            if key.lower() in proc_lower or proc_lower in key.lower():
+                return int(val)
+    return cfg.slot_duration
+
+
+def _parse_date_range(date_range: str) -> tuple[date, date]:
+    if "/" in date_range:
+        start_str, end_str = date_range.split("/", 1)
+        return date.fromisoformat(start_str), date.fromisoformat(end_str)
+    start = date.fromisoformat(date_range)
+    return start, start + timedelta(days=6)
+
+
+def _period_hours(period: str | None) -> tuple[int, int]:
+    """Converte preferência de período em (hora_início, hora_fim)."""
+    if not period:
+        return BUSINESS_START, BUSINESS_END
+    p = period.lower()
+    if any(x in p for x in ("manha", "manhã", "morning")):
+        return 9, 12
+    if any(x in p for x in ("tarde", "afternoon")):
+        return 13, 19
+    return BUSINESS_START, BUSINESS_END
+
+
+def _mock_slots(start_date: date, end_date: date, duration: int,
+                day_start_h: int, day_end_h: int, tz) -> dict:
+    """Gera slots simulados plausíveis quando o calendário não está configurado (modo demo)."""
+    now = datetime.now(tz)
+    tomorrow = (now + timedelta(days=1)).date()
+    current = max(start_date, tomorrow)
+
+    # Distribuir horários ao longo do dia para variedade
+    candidate_hours = [h for h in [9, 10, 11, 14, 15, 16, 17]
+                       if h >= day_start_h and h + duration / 60 <= day_end_h]
+    if not candidate_hours:
+        candidate_hours = [day_start_h]
+
+    available = []
+    hour_idx = 0
+    while current <= end_date and len(available) < 3:
+        if current.weekday() > 5:  # Pula domingo
+            current += timedelta(days=1)
+            continue
+        h = candidate_hours[hour_idx % len(candidate_hours)]
+        hour_idx += 1
+        slot = datetime.combine(current, time(h, 0), tzinfo=tz)
+        slot_end = slot + timedelta(minutes=duration)
+        weekday = _WEEKDAYS_PT[current.weekday()]
+        available.append({
+            "slot_start": slot.isoformat(),
+            "slot_end":   slot_end.isoformat(),
+            "label": f"{weekday}, {current.strftime('%d/%m')} às {slot.strftime('%H:%M')}",
+        })
+        current += timedelta(days=1)
+
+    if not available:
+        return {"slots": [], "message": "Nenhum horário disponível no período. Tente outro intervalo."}
+    return {"slots": available}
+
+
+def list_available_slots(
+    date_range: str,
+    procedure_type: str | None = None,
+    period: str | None = None,
+) -> dict:
     """
-    Retorna até 3 slots livres no intervalo pedido.
+    Retorna até 3 slots livres, um por dia, distribuídos no intervalo pedido.
     date_range: 'YYYY-MM-DD' ou 'YYYY-MM-DD/YYYY-MM-DD'.
+    period: 'manha' ou 'tarde' (opcional).
     """
-    if not is_configured():
-        return {"error": "Calendário não configurado. Entre em contato com a recepção."}
+    cfg            = get_config()
+    tz             = cfg.tz
+    slot_duration  = _resolve_duration(procedure_type, cfg)
+    buffer         = cfg.slot_buffer
+    day_start_h, day_end_h = _period_hours(period)
 
     try:
-        cfg = get_config()
-        calendar_id   = cfg.calendar_id
-        slot_duration = cfg.slot_duration
-        tz            = cfg.tz
-        service       = _get_service()
+        start_date, end_date = _parse_date_range(date_range)
+    except ValueError as e:
+        return {"error": f"date_range inválido: {e}"}
 
-        if "/" in date_range:
-            start_str, end_str = date_range.split("/", 1)
-            start_date = date.fromisoformat(start_str)
-            end_date   = date.fromisoformat(end_str)
-        else:
-            start_date = date.fromisoformat(date_range)
-            end_date   = start_date + timedelta(days=6)
+    # Fallback de demo: sem credenciais ou DEMO_CALENDAR=true
+    demo_mode = os.getenv("DEMO_CALENDAR", "").lower() in ("true", "1", "yes")
+    if not is_configured() or demo_mode:
+        log.info("gcal_demo_fallback", procedure_type=procedure_type, period=period)
+        return _mock_slots(start_date, end_date, slot_duration, day_start_h, day_end_h, tz)
+
+    try:
+        calendar_id = cfg.calendar_id
+        service     = _get_service()
 
         time_min = datetime.combine(start_date, time(0, 0), tzinfo=tz).isoformat()
         time_max = datetime.combine(end_date + timedelta(days=1), time(0, 0), tzinfo=tz).isoformat()
@@ -82,20 +156,23 @@ def list_available_slots(date_range: str, procedure_type: str | None = None) -> 
         now       = datetime.now(tz)
         available = []
         current   = start_date
+        buf       = timedelta(minutes=buffer)
 
         while current <= end_date and len(available) < 3:
-            # Lumina abre segunda (0) a sábado (5)
-            if current.weekday() > 5:
+            if current.weekday() > 5:  # Pula domingo
                 current += timedelta(days=1)
                 continue
 
-            slot    = datetime.combine(current, time(BUSINESS_START, 0), tzinfo=tz)
-            day_end = datetime.combine(current, time(BUSINESS_END, 0), tzinfo=tz)
+            slot    = datetime.combine(current, time(day_start_h, 0), tzinfo=tz)
+            day_end = datetime.combine(current, time(day_end_h,   0), tzinfo=tz)
 
-            while slot + timedelta(minutes=slot_duration) <= day_end and len(available) < 3:
+            # Curadoria: pegar no máx. 1 slot por dia
+            found_today = False
+            while slot + timedelta(minutes=slot_duration) <= day_end and not found_today:
                 slot_end = slot + timedelta(minutes=slot_duration)
                 if slot > now:
-                    occupied = any(slot < be and slot_end > bs for bs, be in busy)
+                    # Buffer: slot bloqueado se começa antes do fim de um evento + buffer
+                    occupied = any(slot < be + buf and slot_end > bs for bs, be in busy)
                     if not occupied:
                         weekday = _WEEKDAYS_PT[current.weekday()]
                         available.append({
@@ -103,6 +180,7 @@ def list_available_slots(date_range: str, procedure_type: str | None = None) -> 
                             "slot_end":   slot_end.isoformat(),
                             "label": f"{weekday}, {current.strftime('%d/%m')} às {slot.strftime('%H:%M')}",
                         })
+                        found_today = True
                 slot += timedelta(minutes=slot_duration)
 
             current += timedelta(days=1)

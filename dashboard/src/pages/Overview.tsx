@@ -63,7 +63,7 @@ export function Overview() {
 
   const filteredLeads = useMemo(
     () => leads?.filter(l => {
-      try { return isWithinInterval(parseISO(l.created_at), interval) } catch { return false }
+      try { return !!l.created_at && isWithinInterval(parseISO(l.created_at), interval) } catch { return false }
     }) ?? [],
     [leads, interval]
   )
@@ -80,7 +80,7 @@ export function Overview() {
     let commercial = 0, afterHours = 0
     for (const l of filteredLeads) {
       try {
-        if (isCommercialHour(parseISO(l.created_at))) commercial++
+        if (l.created_at && isCommercialHour(parseISO(l.created_at))) commercial++
         else afterHours++
       } catch { /* skip */ }
     }
@@ -95,6 +95,7 @@ export function Overview() {
     const days: Record<string, number> = {}
     for (const l of leads ?? []) {
       try {
+        if (!l.created_at) continue
         const key = format(parseISO(l.created_at), 'dd/MM')
         days[key] = (days[key] ?? 0) + 1
       } catch { /* skip */ }

@@ -25,6 +25,7 @@ from sessions import (
     get_history, save_turn,
     get_lead_data, is_lead_qualified,
     get_patient_appointments,
+    get_offered_slots,
     log_escalation,
 )
 from evolution import send_message, notify_human
@@ -132,9 +133,16 @@ def _build_lead_context(phone: str) -> str:
     missing = [f for f in get_config().lead_fields if f not in data]
     block   = "\n\n[DADOS DA CLIENTE JÁ COLETADOS]\n" + "\n".join(lines)
     if missing:
-        block += f"\nAinda faltam coletar: {', '.join(missing)}"
+        block += (
+            f"\nAinda faltam coletar: {', '.join(missing)}. "
+            "Salve com save_lead_field APENAS um dado novo que a cliente acabou de informar; "
+            "não re-salve os que já estão acima."
+        )
     else:
-        block += "\nLead completo — continue o atendimento normalmente."
+        block += (
+            "\nLead completo. NÃO chame save_lead_field nem mark_lead_complete de novo — "
+            "siga direto para o agendamento."
+        )
     return block
 
 
@@ -145,6 +153,23 @@ def _slot_label(iso: str) -> str:
         return f"{_DAYS[dt.weekday()]}, {dt.strftime('%d/%m/%Y às %H:%M')}"
     except Exception:
         return iso
+
+
+def _build_offered_slots_context(phone: str) -> str:
+    slots = get_offered_slots(phone)
+    if not slots:
+        return ""
+    lines = [
+        f"- Opção {i+1}: {s.get('label', '')} "
+        f"(slot_start={s.get('slot_start')}, slot_end={s.get('slot_end')})"
+        for i, s in enumerate(slots)
+    ]
+    return (
+        "\n\n[HORÁRIOS JÁ OFERECIDOS À CLIENTE]\n" + "\n".join(lines) +
+        "\nSe a cliente escolher um destes (por número, horário ou dia), chame "
+        "create_pending_appointment IMEDIATAMENTE com os slot_start/slot_end EXATOS "
+        "da opção escolhida. NÃO chame list_available_slots de novo."
+    )
 
 
 def _build_appointments_context(phone: str) -> str:
@@ -192,11 +217,61 @@ def _run_tool_loop(phone: str, messages: list, track_calls: list | None = None) 
         "inc_appointments_created":  appointments_created_total.inc,
     }
 
+    # Acumula a narração que o modelo emite junto com as tool calls.
+    # O Claude frequentemente responde texto + tool_use na MESMA resposta
+    # (ex.: "Deixa eu ver os horários 🌿" + list_available_slots). Sem isso,
+    # esse texto seria descartado → reply vazio → histórico corrompido.
+    collected_text: list[str] = []
+    used_tool = False
+
+    def _assemble() -> str:
+        # Junta os balões coletados, removendo duplicatas. O modelo às vezes
+        # re-narra a mesma fala em iterações diferentes do tool loop; sem dedup
+        # a cliente receberia balões repetidos. O split por '---' é no envio.
+        balloons: list[str] = []
+        for chunk in collected_text:
+            for part in re.split(r'\n\s*-{3,}\s*\n|\n{2,}', chunk):
+                part = part.strip()
+                if not part:
+                    continue
+                words = set(re.findall(r'\w+', part.lower()))
+                dup = False
+                for b in balloons:
+                    bw = set(re.findall(r'\w+', b.lower()))
+                    if not words or not bw:
+                        continue
+                    overlap = len(words & bw) / len(words | bw)
+                    if overlap > 0.6:   # balões muito parecidos = repetição
+                        dup = True
+                        break
+                if dup:
+                    continue
+                balloons.append(part)
+        return "\n\n---\n\n".join(balloons).strip()
+
+    def _force_text() -> str:
+        # Rede de segurança: se o modelo usou tools mas não escreveu nada,
+        # pede uma resposta de texto (sem tools) para a Lara nunca ficar muda.
+        try:
+            resp = _anthropic_client.messages.create(
+                model=_CLAUDE_MODEL,
+                max_tokens=800,
+                system=_SYSTEM_CACHE,
+                messages=messages,
+            )
+            return "\n\n".join(
+                b.text.strip() for b in resp.content
+                if b.type == "text" and b.text and b.text.strip()
+            ).strip()
+        except Exception as e:
+            log.warning("force_text_failed", error=str(e))
+            return ""
+
     for _ in range(5):
         t0 = time.time()
         response = _anthropic_client.messages.create(
             model=_CLAUDE_MODEL,
-            max_tokens=600,
+            max_tokens=800,
             system=_SYSTEM_CACHE,
             messages=messages,
             tools=tools,
@@ -205,11 +280,19 @@ def _run_tool_loop(phone: str, messages: list, track_calls: list | None = None) 
 
         text_blocks     = [b for b in response.content if b.type == "text"]
         tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
-        content_text    = text_blocks[0].text if text_blocks else ""
+        turn_text       = "\n\n".join(
+            b.text.strip() for b in text_blocks if b.text and b.text.strip()
+        )
+        if turn_text:
+            collected_text.append(turn_text)
 
         if not tool_use_blocks:
-            return content_text.strip(), escalated
+            text = _assemble()
+            if not text and used_tool and not escalated:
+                text = _force_text()
+            return text, escalated
 
+        used_tool = True
         messages = messages + [{"role": "assistant", "content": response.content}]
 
         tool_results = []
@@ -234,7 +317,10 @@ def _run_tool_loop(phone: str, messages: list, track_calls: list | None = None) 
         if escalated:
             return "", True
 
-    return "", escalated
+    text = _assemble()
+    if not text and used_tool and not escalated:
+        text = _force_text()
+    return text, escalated
 
 
 def _split_and_send(phone: str, text: str) -> None:
@@ -265,11 +351,12 @@ def process_message(phone: str, text: str) -> None:
         rag_block   = f"\n\n[INFORMAÇÕES DA CLÍNICA RELEVANTES]\n{rag_context}" if rag_context else ""
         lead_block  = _build_lead_context(phone)
         apt_block   = _build_appointments_context(phone)
+        slot_block  = _build_offered_slots_context(phone)
         time_block  = _temporal_context()
 
         history  = get_history(phone)
         messages = history + [
-            {"role": "user", "content": text + rag_block + lead_block + apt_block + time_block}
+            {"role": "user", "content": text + rag_block + lead_block + apt_block + slot_block + time_block}
         ]
 
         reply, escalated = _run_tool_loop(phone, messages)
@@ -311,10 +398,11 @@ def run_test_message(phone: str, text: str, history: list) -> dict:
     rag_block   = f"\n\n[INFORMAÇÕES DA CLÍNICA RELEVANTES]\n{rag_context}" if rag_context else ""
     lead_block  = _build_lead_context(phone)
     apt_block   = _build_appointments_context(phone)
+    slot_block  = _build_offered_slots_context(phone)
     time_block  = _temporal_context()
 
     messages = history + [
-        {"role": "user", "content": text + rag_block + lead_block + apt_block + time_block}
+        {"role": "user", "content": text + rag_block + lead_block + apt_block + slot_block + time_block}
     ]
 
     tool_calls: list[str] = []

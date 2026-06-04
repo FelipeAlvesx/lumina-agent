@@ -186,10 +186,12 @@ function NewAppointmentModal({
 }
 
 const STATUS_EVENT_CLASS: Record<Appointment['status'], string> = {
-  pending:   'cal-event-pending',
-  confirmed: 'cal-event-confirmed',
-  cancelled: 'cal-event-cancelled',
-  rejected:  'cal-event-rejected',
+  pending:               'cal-event-pending',
+  confirmed:             'cal-event-confirmed',
+  cancelled:             'cal-event-cancelled',
+  rejected:              'cal-event-rejected',
+  reschedule_requested:  'cal-event-pending',
+  cancel_requested:      'cal-event-pending',
 }
 
 const WEEKDAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
@@ -429,6 +431,16 @@ export function Appointments() {
               )}
             </div>
 
+            {/* New slot info for reschedule */}
+            {selected.status === 'reschedule_requested' && selected.new_slot_start && (
+              <div className="bg-blue-50 rounded-xl px-3 py-2.5 text-xs">
+                <p className="text-[10px] uppercase tracking-wider text-blue-700 font-semibold mb-1">Novo horário solicitado</p>
+                <p className="text-blue-800 font-medium">
+                  {format(parseISO(selected.new_slot_start), "dd/MM/yyyy · HH:mm", { locale: ptBR })}
+                </p>
+              </div>
+            )}
+
             {/* Actions */}
             {selected.status === 'pending' && (
               <div className="border-t border-gray-50 pt-3 space-y-2 mt-auto">
@@ -444,7 +456,47 @@ export function Appointments() {
                   disabled={busy === selected.id}
                   className="w-full btn-ghost py-2 text-xs text-red-500 hover:bg-red-50"
                 >
-                  ✕ Cancelar
+                  ✕ Rejeitar
+                </button>
+              </div>
+            )}
+
+            {selected.status === 'reschedule_requested' && (
+              <div className="border-t border-gray-50 pt-3 space-y-2 mt-auto">
+                <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Remarcação solicitada pela cliente</p>
+                <button
+                  onClick={() => act(selected.id, 'confirm')}
+                  disabled={busy === selected.id}
+                  className="w-full btn-primary py-2 text-xs flex items-center justify-center gap-1.5"
+                >
+                  ✓ Confirmar remarcação
+                </button>
+                <button
+                  onClick={() => act(selected.id, 'reject')}
+                  disabled={busy === selected.id}
+                  className="w-full btn-ghost py-2 text-xs text-red-500 hover:bg-red-50"
+                >
+                  ✕ Rejeitar remarcação
+                </button>
+              </div>
+            )}
+
+            {selected.status === 'cancel_requested' && (
+              <div className="border-t border-gray-50 pt-3 space-y-2 mt-auto">
+                <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Cancelamento solicitado pela cliente</p>
+                <button
+                  onClick={() => act(selected.id, 'confirm')}
+                  disabled={busy === selected.id}
+                  className="w-full bg-red-500 hover:bg-red-600 text-white rounded-xl py-2 text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                >
+                  ✓ Confirmar cancelamento
+                </button>
+                <button
+                  onClick={() => act(selected.id, 'reject')}
+                  disabled={busy === selected.id}
+                  className="w-full btn-ghost py-2 text-xs text-gray-500 hover:bg-gray-50"
+                >
+                  ✕ Manter agendamento
                 </button>
               </div>
             )}

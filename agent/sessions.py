@@ -6,11 +6,35 @@ TTL de 30 minutos: conversa inativa por mais que isso começa do zero.
 import sqlite3
 import time
 import os
+import threading
 from datetime import datetime
 
 DB_PATH = os.getenv("DB_PATH", "/app/data/sessions.db")
 TTL_SECONDS = 30 * 60
 MAX_TURNS = 10
+
+# Slots oferecidos à cliente no último list_available_slots, por telefone.
+# Os ISO slot_start/slot_end não sobrevivem ao histórico (que só guarda texto),
+# então a Lara perderia os horários ao escolher num turno seguinte. Guardamos
+# aqui em memória (processo único) para reinjetar no contexto e permitir o
+# create_pending_appointment direto, sem re-listar.
+_OFFERED_SLOTS: dict[str, list] = {}
+_OFFERED_LOCK = threading.Lock()
+
+
+def save_offered_slots(phone: str, slots: list) -> None:
+    with _OFFERED_LOCK:
+        _OFFERED_SLOTS[phone] = slots
+
+
+def get_offered_slots(phone: str) -> list:
+    with _OFFERED_LOCK:
+        return list(_OFFERED_SLOTS.get(phone, []))
+
+
+def clear_offered_slots(phone: str) -> None:
+    with _OFFERED_LOCK:
+        _OFFERED_SLOTS.pop(phone, None)
 
 _INITIAL_SERVICES = [
     ("Faciais & Limpeza", "Limpeza de pele profunda",       60,  180.0),
@@ -136,7 +160,13 @@ def _seed_default_data(conn: sqlite3.Connection) -> None:
 
 # ── Session history ───────────────────────────────────────────────────────────
 
+def _ts_to_iso(ts: float) -> str:
+    from datetime import timezone
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
 def get_history(phone: str) -> list[dict]:
+    """Retorna histórico para o loop do Claude (sem timestamp)."""
     cutoff = time.time() - TTL_SECONDS
     conn = _get_conn()
     rows = conn.execute(
@@ -149,6 +179,49 @@ def get_history(phone: str) -> list[dict]:
     history = [{"role": row[0], "content": row[1]} for row in rows]
     max_msgs = MAX_TURNS * 2
     return history[-max_msgs:] if len(history) > max_msgs else history
+
+
+def get_conversation_for_dashboard(phone: str) -> list[dict]:
+    """Retorna todo o histórico da conversa com timestamps ISO para o dashboard."""
+    conn = _get_conn()
+    rows = conn.execute(
+        """SELECT role, content, ts FROM sessions
+           WHERE phone = ?
+           ORDER BY ts ASC""",
+        (phone,)
+    ).fetchall()
+    conn.close()
+    return [
+        {"role": row[0], "content": row[1], "timestamp": _ts_to_iso(row[2])}
+        for row in rows
+    ]
+
+
+def get_recent_conversations(limit: int = 50) -> list[dict]:
+    """Retorna lista de conversas recentes (última mensagem por telefone)."""
+    conn = _get_conn()
+    rows = conn.execute(
+        """SELECT s.phone, MAX(s.ts) as last_ts,
+                  (SELECT content FROM sessions s2 WHERE s2.phone = s.phone ORDER BY s2.ts DESC LIMIT 1) as last_msg,
+                  (SELECT role    FROM sessions s2 WHERE s2.phone = s.phone ORDER BY s2.ts DESC LIMIT 1) as last_role,
+                  (SELECT value   FROM lead_data l  WHERE l.phone  = s.phone AND l.field = 'nome' LIMIT 1) as nome
+           FROM sessions s
+           GROUP BY s.phone
+           ORDER BY last_ts DESC
+           LIMIT ?""",
+        (limit,)
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "phone":        row[0],
+            "nome":         row[4] or "",
+            "last_message": row[2] or "",
+            "last_role":    row[3] or "",
+            "last_ts":      _ts_to_iso(row[1]) if row[1] else None,
+        }
+        for row in rows
+    ]
 
 
 def save_turn(phone: str, user_text: str, assistant_text: str) -> None:
@@ -223,7 +296,7 @@ def get_all_leads(limit: int = 100, offset: int = 0) -> list[dict]:
             "procedimento_interesse": data.get("procedimento_interesse", ""),
             "indicacao": data.get("indicacao", ""),
             "qualified": all(f in data for f in ("nome", "procedimento_interesse", "indicacao")),
-            "last_contact": last_ts,
+            "created_at": _ts_to_iso(last_ts) if last_ts else None,
         })
     conn.close()
     return leads

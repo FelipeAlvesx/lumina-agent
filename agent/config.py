@@ -30,6 +30,8 @@ class BusinessConfig:
     human_phone: str
     calendar_id: str
     slot_duration: int
+    slot_buffer: int
+    procedure_durations: dict
     lead_fields: tuple
     procedures: list
     payment_methods: list
@@ -97,8 +99,12 @@ def _load_config() -> BusinessConfig:
         agent_role=agent.get("role", "consultora de agendamentos"),
         evolution_instance=integ["evolution"]["instance"],
         human_phone=str(integ.get("human_phone", "")),
-        calendar_id=str(gcal.get("calendar_id", "") or ""),
+        # Precedência: calendar_id no YAML > env GOOGLE_CALENDAR_ID. Mantém o
+        # .env como fonte (a recomendação do próprio comentário no YAML).
+        calendar_id=str(gcal.get("calendar_id") or os.getenv("GOOGLE_CALENDAR_ID", "") or ""),
         slot_duration=int(gcal.get("slot_duration_minutes", 60)),
+        slot_buffer=int(gcal.get("slot_buffer_minutes", 0)),
+        procedure_durations=dict(gcal.get("procedure_durations") or {}),
         lead_fields=tuple(vc.get("lead_fields", ["nome", "procedimento_interesse", "indicacao"])),
         procedures=list(vc.get("procedures", [])),
         payment_methods=list(vc.get("payment_methods", [])),

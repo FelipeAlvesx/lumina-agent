@@ -10,7 +10,8 @@ import yaml as _yaml
 
 from sessions import (
     get_stats, get_all_leads, get_all_appointments,
-    get_history, get_appointment, update_appointment, create_appointment,
+    get_history, get_conversation_for_dashboard, get_recent_conversations,
+    get_appointment, update_appointment, create_appointment,
     get_all_services, create_service, update_service, delete_service,
     get_all_professionals, create_professional, update_professional, delete_professional,
 )
@@ -23,18 +24,30 @@ from verticals.estetica.tools import slot_label
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 
+def _fmt_ts(ts) -> str | None:
+    if not ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+    except Exception:
+        return str(ts)
+
+
 def _map_apt(apt: dict) -> dict:
     """Normaliza campos do DB para o contrato esperado pelo dashboard."""
     return {
-        "id":         apt["id"],
-        "phone":      apt["phone"],
-        "nome":       apt.get("patient_name") or "",
-        "procedure":  apt.get("procedure_type") or "",
-        "datetime":   apt.get("slot_start") or "",
-        "slot_end":   apt.get("slot_end") or "",
-        "status":     apt["status"],
-        "notes":      apt.get("notes") or "",
-        "created_at": apt.get("created_at") or "",
+        "id":              apt["id"],
+        "phone":           apt["phone"],
+        "nome":            apt.get("patient_name") or "",
+        "procedure":       apt.get("procedure_type") or "",
+        "datetime":        apt.get("slot_start") or "",
+        "slot_end":        apt.get("slot_end") or "",
+        "new_slot_start":  apt.get("new_slot_start") or None,
+        "new_slot_end":    apt.get("new_slot_end") or None,
+        "status":          apt["status"],
+        "notes":           apt.get("notes") or "",
+        "created_at":      _fmt_ts(apt.get("created_at")),
     }
 
 
@@ -113,15 +126,22 @@ def appointments():
     return jsonify({"id": apt_id, "ok": True}), 201
 
 
-@api_bp.route("/conversations/<phone>", methods=["GET", "OPTIONS"])
+@api_bp.route("/conversations", methods=["GET", "OPTIONS"])
+def conversations_list():
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+    limit = int(request.args.get("limit", 50))
+    return jsonify({"conversations": get_recent_conversations(limit=limit)})
+
+
+@api_bp.route("/conversations/<path:phone>", methods=["GET", "OPTIONS"])
 def conversations(phone: str):
     if request.method == "OPTIONS":
         return _cors(jsonify({}))
-    # Aceita telefone com ou sem @s.whatsapp.net
     if not phone.endswith("@s.whatsapp.net"):
         phone = phone + "@s.whatsapp.net"
-    history = get_history(phone)
-    return jsonify({"phone": phone, "messages": history})
+    messages = get_conversation_for_dashboard(phone)
+    return jsonify({"phone": phone, "messages": messages})
 
 
 @api_bp.route("/appointments/<int:appointment_id>/confirm", methods=["POST", "OPTIONS"])
@@ -231,6 +251,59 @@ def reject_appointment(appointment_id: int):
         return jsonify({"ok": True, "status": "confirmed"})
 
     return jsonify({"error": f"Status '{status}' não permite rejeição"}), 400
+
+
+@api_bp.route("/appointments/<int:appointment_id>/reschedule", methods=["POST", "OPTIONS"])
+def reschedule_appointment_endpoint(appointment_id: int):
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+
+    apt = get_appointment(appointment_id)
+    if not apt:
+        return jsonify({"error": "Agendamento não encontrado"}), 404
+
+    body = request.get_json(force=True) or {}
+    new_slot_start = body.get("new_slot_start", "").strip()
+    new_slot_end   = body.get("new_slot_end", "").strip()
+
+    if not new_slot_start:
+        return jsonify({"error": "new_slot_start obrigatório"}), 400
+
+    if not new_slot_end:
+        from datetime import datetime, timedelta
+        try:
+            dt = datetime.fromisoformat(new_slot_start)
+            new_slot_end = (dt + timedelta(hours=1)).isoformat()
+        except ValueError:
+            new_slot_end = new_slot_start
+
+    update_appointment(
+        appointment_id,
+        status="reschedule_requested",
+        new_slot_start=new_slot_start,
+        new_slot_end=new_slot_end,
+    )
+    return jsonify({"ok": True, "status": "reschedule_requested"})
+
+
+@api_bp.route("/appointments/<int:appointment_id>/cancel", methods=["POST", "OPTIONS"])
+def cancel_appointment_endpoint(appointment_id: int):
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+
+    apt = get_appointment(appointment_id)
+    if not apt:
+        return jsonify({"error": "Agendamento não encontrado"}), 404
+
+    body = request.get_json(force=True) or {}
+    reason = body.get("reason", "")
+
+    notes = apt.get("notes", "")
+    if reason:
+        notes = f"{notes}\nMotivo cancelamento: {reason}".strip()
+
+    update_appointment(appointment_id, status="cancel_requested", notes=notes)
+    return jsonify({"ok": True, "status": "cancel_requested"})
 
 
 @api_bp.route("/services", methods=["GET", "POST", "OPTIONS"])
