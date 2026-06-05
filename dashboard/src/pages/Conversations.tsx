@@ -4,7 +4,8 @@ import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { api, Message } from '../lib/api'
 import { useFetch } from '../hooks/useFetch'
-import { IconSearch } from '../components/Icon'
+import { RefreshBar } from '../components/RefreshBar'
+import { IconSearch, IconAlert } from '../components/Icon'
 
 function initials(nome: string, phone: string) {
   if (nome) {
@@ -67,15 +68,20 @@ export function Conversations() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedPhone, setSelectedPhone] = useState<string>(searchParams.get('phone') ?? '')
   const [query, setQuery] = useState('')
+  const [filterEscalated, setFilterEscalated] = useState(false)
   const [messages, setMessages] = useState<Message[] | null>(null)
   const [loadingChat, setLoadingChat] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
-  const { data: conversations } = useFetch(() => api.getConversations())
+  const { data: conversations, refetch, lastUpdated, loading } = useFetch(() => api.getConversations())
+
+  const escalatedCount = (conversations ?? []).filter(c => c.escalated).length
 
   const filtered = (conversations ?? []).filter(c => {
     const q = query.toLowerCase()
-    return !q || c.nome.toLowerCase().includes(q) || c.phone.includes(q)
+    const matchesQuery = !q || c.nome.toLowerCase().includes(q) || c.phone.includes(q)
+    const matchesFilter = !filterEscalated || c.escalated
+    return matchesQuery && matchesFilter
   })
 
   useEffect(() => {
@@ -104,8 +110,12 @@ export function Conversations() {
 
         {/* Sidebar — conversation list */}
         <div className="w-72 shrink-0 border-r border-gray-100 flex flex-col">
-          {/* Search */}
-          <div className="p-3 border-b border-gray-100">
+          {/* Search + filter */}
+          <div className="p-3 border-b border-gray-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-500 px-1">Conversas</span>
+              <RefreshBar refetch={refetch} lastUpdated={lastUpdated} loading={loading} />
+            </div>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
                 <IconSearch className="w-3.5 h-3.5" />
@@ -118,6 +128,20 @@ export function Conversations() {
                 className="input pl-8 py-2 text-sm"
               />
             </div>
+            {escalatedCount > 0 && (
+              <button
+                onClick={() => setFilterEscalated(f => !f)}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  filterEscalated
+                    ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                    : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                }`}
+              >
+                <IconAlert className="w-3.5 h-3.5" />
+                {escalatedCount} escalada{escalatedCount !== 1 ? 's' : ''}
+                {filterEscalated && <span className="ml-auto">✕</span>}
+              </button>
+            )}
           </div>
 
           {/* List */}
@@ -125,7 +149,7 @@ export function Conversations() {
             {filtered.length === 0 && (
               <div className="py-12 text-center">
                 <p className="text-sm text-gray-300">
-                  {query ? 'Nenhum resultado' : 'Sem conversas ainda'}
+                  {query || filterEscalated ? 'Nenhum resultado' : 'Sem conversas ainda'}
                 </p>
               </div>
             )}
@@ -137,11 +161,18 @@ export function Conversations() {
                   selectedPhone === conv.phone ? 'bg-purple-50 border-l-2 border-l-primary' : ''
                 }`}
               >
-                <div
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0 mt-0.5"
-                  style={{ background: avatarColor(conv.phone) }}
-                >
-                  {initials(conv.nome, conv.phone)}
+                <div className="relative shrink-0">
+                  <div
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-semibold mt-0.5"
+                    style={{ background: avatarColor(conv.phone) }}
+                  >
+                    {initials(conv.nome, conv.phone)}
+                  </div>
+                  {conv.escalated && (
+                    <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-amber-400 rounded-full border-2 border-white flex items-center justify-center">
+                      <span className="text-white text-[7px] font-bold leading-none">!</span>
+                    </span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-0.5">
@@ -152,12 +183,19 @@ export function Conversations() {
                       {relativeTime(conv.last_ts)}
                     </span>
                   </div>
-                  <p className={`text-xs truncate ${
-                    conv.last_role === 'assistant' ? 'text-primary/80' : 'text-gray-500'
-                  }`}>
-                    {conv.last_role === 'assistant' && <span className="font-medium">Lara: </span>}
-                    {conv.last_message}
-                  </p>
+                  <div className="flex items-center gap-1">
+                    {conv.escalated && (
+                      <span className="text-[10px] bg-amber-100 text-amber-600 px-1 rounded font-medium shrink-0">
+                        escalada
+                      </span>
+                    )}
+                    <p className={`text-xs truncate ${
+                      conv.last_role === 'assistant' ? 'text-primary/80' : 'text-gray-500'
+                    }`}>
+                      {conv.last_role === 'assistant' && <span className="font-medium">Lara: </span>}
+                      {conv.last_message}
+                    </p>
+                  </div>
                 </div>
               </button>
             ))}
@@ -183,9 +221,14 @@ export function Conversations() {
               >
                 {initials(selected.nome, selected.phone)}
               </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-900">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                   {selected.nome || selected.phone}
+                  {selected.escalated && (
+                    <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">
+                      escalada para humano
+                    </span>
+                  )}
                 </p>
                 <p className="text-xs text-gray-400">{selected.phone}</p>
               </div>

@@ -3,11 +3,12 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, PieChart, Pie,
 } from 'recharts'
-import { format, parseISO, subDays, isWithinInterval, startOfDay, endOfDay, getDay, getHours } from 'date-fns'
+import { format, parseISO, subDays, isWithinInterval, startOfDay, endOfDay, isToday } from 'date-fns'
 import { api } from '../lib/api'
 import { useFetch } from '../hooks/useFetch'
 import { StatCard } from '../components/StatCard'
-import { IconUsers, IconCalendar, IconClock, IconTrendUp } from '../components/Icon'
+import { RefreshBar } from '../components/RefreshBar'
+import { IconUsers, IconCalendar, IconTrendUp, IconClock } from '../components/Icon'
 
 type Period = 'today' | 'yesterday' | '7d' | '30d' | 'prev' | 'year'
 
@@ -34,12 +35,6 @@ function getPeriodInterval(p: Period): { start: Date; end: Date } {
   }
 }
 
-function isCommercialHour(d: Date) {
-  const day = getDay(d) // 0=Sun
-  const h   = getHours(d)
-  return day >= 1 && day <= 6 && h >= 9 && h < 19
-}
-
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null
   return (
@@ -56,8 +51,14 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export function Overview() {
   const [period, setPeriod] = useState<Period>('30d')
-  const { data: leads }        = useFetch(() => api.getLeads({ limit: 500 }))
-  const { data: appointments } = useFetch(() => api.getAppointments())
+  const { data: leads, refetch: refetchLeads, lastUpdated, loading }
+    = useFetch(() => api.getLeads({ limit: 500 }))
+  const { data: appointments, refetch: refetchApts }
+    = useFetch(() => api.getAppointments())
+  const { data: stats }
+    = useFetch(() => api.getStats())
+
+  function refetch() { refetchLeads(); refetchApts() }
 
   const interval = getPeriodInterval(period)
 
@@ -75,20 +76,15 @@ export function Overview() {
     [appointments, interval]
   )
 
-  /* Commercial hours */
-  const { commercial, afterHours } = useMemo(() => {
-    let commercial = 0, afterHours = 0
-    for (const l of filteredLeads) {
-      try {
-        if (l.created_at && isCommercialHour(parseISO(l.created_at))) commercial++
-        else afterHours++
-      } catch { /* skip */ }
-    }
-    return { commercial, afterHours }
-  }, [filteredLeads])
+  const todayApts = useMemo(
+    () => appointments?.filter(a => {
+      try { return isToday(parseISO(a.datetime)) } catch { return false }
+    }).length ?? 0,
+    [appointments]
+  )
 
-  const commercialPct = filteredLeads.length > 0
-    ? Math.round((commercial / filteredLeads.length) * 100) : 0
+  const convRate = filteredLeads.length > 0
+    ? Math.round((filteredApts.length / filteredLeads.length) * 100) : 0
 
   /* Activity line chart — contacts per day */
   const activityData = useMemo(() => {
@@ -123,16 +119,10 @@ export function Overview() {
     const labelMap: Record<string, string> = {
       pending: 'Pendentes', confirmed: 'Confirmados',
       rejected: 'Rejeitados', cancelled: 'Cancelados',
+      reschedule_requested: 'Remarcação', cancel_requested: 'Cancelamento',
     }
     return Object.entries(counts).map(([status, value]) => ({ name: labelMap[status] ?? status, value }))
   }, [filteredApts])
-
-  /* Donut for commercial hours */
-  const donutData = [
-    { name: 'Horário comercial', value: commercial || 0 },
-    { name: 'Fora do horário',   value: afterHours || 0 },
-  ]
-  const DONUT_COLORS = ['#7C3D6E', '#C5A87D']
 
   return (
     <div className="space-y-6 animate-fade-in pb-8">
@@ -142,6 +132,7 @@ export function Overview() {
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-400 mt-0.5">Visão geral do negócio</p>
         </div>
+        <RefreshBar refetch={refetch} lastUpdated={lastUpdated} loading={loading} />
       </div>
 
       {/* Period tabs */}
@@ -158,36 +149,32 @@ export function Overview() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 stagger">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger">
         <StatCard
           label="Clientes no período"
           subtitle="Contatos registrados"
           value={filteredLeads.length}
-          trend={{ pct: 18 }}
           icon={<IconUsers className="w-5 h-5" />}
           delay={0}
         />
         <StatCard
-          label="Agendamentos"
-          subtitle="Total no período"
-          value={filteredApts.length}
-          trend={{ pct: 12 }}
-          icon={<IconCalendar className="w-5 h-5" />}
+          label="Taxa de conversão"
+          subtitle="contatos → agendamentos"
+          value={`${convRate}%`}
+          icon={<IconTrendUp className="w-5 h-5" />}
           delay={80}
         />
         <StatCard
           label="Confirmados"
-          subtitle="Agendamentos confirmados"
+          subtitle={`de ${filteredApts.length} agendamentos`}
           value={filteredApts.filter(a => a.status === 'confirmed').length}
-          trend={{ pct: 5.2 }}
-          icon={<IconTrendUp className="w-5 h-5" />}
+          icon={<IconCalendar className="w-5 h-5" />}
           delay={160}
         />
         <StatCard
-          label="Horário comercial"
-          subtitle={`${afterHours} fora do horário`}
-          value={`${commercialPct}%`}
-          trend={{ pct: 3.1 }}
+          label="Pendentes"
+          subtitle={`${todayApts} agendamento${todayApts !== 1 ? 's' : ''} hoje`}
+          value={stats?.appointments_pending ?? filteredApts.filter(a => a.status === 'pending').length}
           icon={<IconClock className="w-5 h-5" />}
           delay={240}
         />
@@ -219,41 +206,38 @@ export function Overview() {
         </div>
 
         <div className="card animate-fade-in-up" style={{ animationDelay: '160ms' }}>
-          <h2 className="text-sm font-semibold text-gray-700 mb-1">Por turno</h2>
-          <p className="text-xs text-gray-400 mb-4">Horário comercial vs fora</p>
-          {filteredLeads.length === 0 ? (
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Funil rápido</h2>
+          <p className="text-xs text-gray-400 mb-4">Conversão do período</p>
+          {!stats ? (
             <div className="h-48 flex items-center justify-center text-sm text-gray-300">Sem dados</div>
           ) : (
-            <>
-              <ResponsiveContainer width="100%" height={160}>
-                <PieChart>
-                  <Pie
-                    data={donutData}
-                    cx="50%" cy="50%"
-                    innerRadius={48} outerRadius={72}
-                    dataKey="value"
-                    paddingAngle={3}
-                    isAnimationActive
-                    animationBegin={200}
-                    animationDuration={800}
-                  >
-                    {donutData.map((_, i) => (
-                      <Cell key={i} fill={DONUT_COLORS[i]} />
-                    ))}
-                  </Pie>
-                  <Tooltip content={<CustomTooltip />}/>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="flex justify-center gap-4 mt-2">
-                {donutData.map((d, i) => (
-                  <div key={d.name} className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: DONUT_COLORS[i] }}/>
-                    <span className="text-xs text-gray-500">{d.name}</span>
-                    <span className="text-xs font-semibold text-gray-700">{d.value}</span>
+            <div className="space-y-3 pt-2">
+              {[
+                { label: 'Contatos',     value: filteredLeads.length, color: '#7C3D6E' },
+                { label: 'Qualificados', value: filteredLeads.filter(l => l.qualified).length, color: '#9B5089' },
+                { label: 'Agendados',    value: filteredApts.length, color: '#C5A87D' },
+                { label: 'Confirmados',  value: filteredApts.filter(a => a.status === 'confirmed').length, color: '#D4BB99' },
+              ].map((step, _i, arr) => {
+                const pct = arr[0].value > 0 ? Math.round(step.value / arr[0].value * 100) : 0
+                const barW = pct > 0 ? Math.max(pct, 8) : 0
+                return (
+                  <div key={step.label}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs text-gray-600">{step.label}</span>
+                      <span className="text-xs font-semibold text-gray-800">
+                        {step.value} <span className="text-gray-400 font-normal">({pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-700"
+                        style={{ width: `${barW}%`, background: step.color }}
+                      />
+                    </div>
                   </div>
-                ))}
-              </div>
-            </>
+                )
+              })}
+            </div>
           )}
         </div>
       </div>

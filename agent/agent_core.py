@@ -75,15 +75,20 @@ def mark_escalated(phone: str) -> None:
         _ESCALATED[phone] = time.time()
 
 
-def is_escalated(phone: str) -> bool:
+def check_escalation_state(phone: str) -> str:
+    """Returns 'active', 'expired', or 'none'."""
     with _ESCALATED_LOCK:
         ts = _ESCALATED.get(phone)
         if ts is None:
-            return False
+            return "none"
         if time.time() - ts > ESCALATION_TTL:
             del _ESCALATED[phone]
-            return False
-        return True
+            return "expired"
+        return "active"
+
+
+def is_escalated(phone: str) -> bool:
+    return check_escalation_state(phone) == "active"
 
 
 def clear_escalation(phone: str) -> None:
@@ -201,8 +206,9 @@ def transcribe_audio(audio_b64: str) -> str | None:
 
 # ── Claude tool loop ──────────────────────────────────────────────────────────
 
-def _run_tool_loop(phone: str, messages: list, track_calls: list | None = None) -> tuple[str, bool]:
-    escalated     = False
+def _run_tool_loop(phone: str, messages: list, track_calls: list | None = None) -> tuple[str, bool, str]:
+    escalated           = False
+    escalation_category = "pedido_humano"
     config        = get_config()
     was_qualified = is_lead_qualified(phone, config.lead_fields)
     phone_hash    = hashlib.sha256(phone.encode()).hexdigest()[:12]
@@ -290,7 +296,7 @@ def _run_tool_loop(phone: str, messages: list, track_calls: list | None = None) 
             text = _assemble()
             if not text and used_tool and not escalated:
                 text = _force_text()
-            return text, escalated
+            return text, escalated, escalation_category
 
         used_tool = True
         messages = messages + [{"role": "assistant", "content": response.content}]
@@ -305,6 +311,7 @@ def _run_tool_loop(phone: str, messages: list, track_calls: list | None = None) 
             if tool_block.name == "escalate_to_human":
                 escalations_total.inc()
                 escalated = True
+                escalation_category = (tool_block.input or {}).get("category", "pedido_humano")
 
             tool_results.append({
                 "type":        "tool_result",
@@ -315,12 +322,12 @@ def _run_tool_loop(phone: str, messages: list, track_calls: list | None = None) 
         messages = messages + [{"role": "user", "content": tool_results}]
 
         if escalated:
-            return "", True
+            return "", True, escalation_category
 
     text = _assemble()
     if not text and used_tool and not escalated:
         text = _force_text()
-    return text, escalated
+    return text, escalated, escalation_category
 
 
 def _split_and_send(phone: str, text: str) -> None:
@@ -339,12 +346,16 @@ def _split_and_send(phone: str, text: str) -> None:
 def process_message(phone: str, text: str) -> None:
     phone_hash = hashlib.sha256(phone.encode()).hexdigest()[:12]
 
-    if is_escalated(phone):
+    escalation_state = check_escalation_state(phone)
+    if escalation_state == "active":
         log.info("message_forwarded_during_escalation", phone_hash=phone_hash)
         notify_human(phone, f"[ESCALADO — cliente enviou] {text}")
         return
 
     try:
+        if escalation_state == "expired":
+            send_message(phone, "Voltei! 😊 Em que posso te ajudar?")
+            messages_sent_total.inc()
         time.sleep(RESPONSE_DELAY)
 
         rag_context = search(text)
@@ -359,15 +370,15 @@ def process_message(phone: str, text: str) -> None:
             {"role": "user", "content": text + rag_block + lead_block + apt_block + slot_block + time_block}
         ]
 
-        reply, escalated = _run_tool_loop(phone, messages)
+        reply, escalated, esc_category = _run_tool_loop(phone, messages)
 
         if escalated:
             save_turn(phone, text, "[ESCALADO PARA HUMANO]")
-            log_escalation(phone, reason=text[:200])
+            log_escalation(phone, reason=text[:200], category=esc_category)
             send_message(phone, "Um momento! Vou te transferir para nossa equipe agora 🙏")
             notify_human(phone, text)
             mark_escalated(phone)
-            log.info("message_escalated", phone_hash=phone_hash)
+            log.info("message_escalated", phone_hash=phone_hash, category=esc_category)
             return
 
         if not reply:
@@ -406,11 +417,11 @@ def run_test_message(phone: str, text: str, history: list) -> dict:
     ]
 
     tool_calls: list[str] = []
-    reply, escalated = _run_tool_loop(phone, messages, track_calls=tool_calls)
+    reply, escalated, esc_category = _run_tool_loop(phone, messages, track_calls=tool_calls)
 
     if escalated:
         save_turn(phone, text, "[ESCALADO PARA HUMANO]")
-        log_escalation(phone, reason=text[:200])
+        log_escalation(phone, reason=text[:200], category=esc_category)
         mark_escalated(phone)
         reply = "Um momento! Vou te transferir para nossa equipe agora 🙏"
     elif reply:

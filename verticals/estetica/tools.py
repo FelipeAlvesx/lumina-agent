@@ -155,9 +155,24 @@ def get_tool_definitions(config) -> list:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "reason": {"type": "string", "description": "Motivo da escalada"},
+                    "reason": {
+                        "type": "string",
+                        "description": "Motivo da escalada (texto livre)",
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["medica", "reclamacao", "pedido_humano", "confusao_repetida", "fora_escopo"],
+                        "description": (
+                            "Categoria da escalada: "
+                            "'medica' = dúvida médica/clínica/contraindicação; "
+                            "'reclamacao' = insatisfação, reclamação ou crítica; "
+                            "'pedido_humano' = cliente pediu explicitamente falar com humano; "
+                            "'confusao_repetida' = cliente repetiu a mesma dúvida 2x+ sem progresso ou demonstrou irritação; "
+                            "'fora_escopo' = assunto fora do escopo da clínica (jurídico, emergência, etc.)."
+                        ),
+                    },
                 },
-                "required": ["reason"],
+                "required": ["reason", "category"],
             },
         },
     ]

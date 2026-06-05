@@ -52,9 +52,9 @@
 |---|-------|------------|--------|
 | 1 | Fluxo de conversa (Lara) | 🔴 Alta | [x] Concluído (Tarefa 1.6 remarcar/cancelar ✅ 2026-06-04) |
 | 2 | Agendamentos | 🔴 Alta | [x] Concluído (2.1–2.5 já estavam implementados; confirmado 2026-06-04) |
-| 3 | Escalação | 🟡 Média | [ ] Não iniciado |
+| 3 | Escalação | 🟡 Média | [x] Concluído (3.1–3.3 ✅ 2026-06-04) |
 | 4 | Knowledge base | 🟢 Baixa | [ ] Não iniciado |
-| 5 | Dashboard | 🔴 Alta (é o que o cliente vê) | [~] Em andamento (5.1 seed ✅, 5.7 remarcar/cancelar UI ✅; 5.2/5.3/5.4/5.5/5.6 pendentes) |
+| 5 | Dashboard | 🔴 Alta (é o que o cliente vê) | [x] Concluído (5.1 seed ✅, 5.2 KPIs ✅, 5.3 Métricas+rota ✅, 5.4 Conversas+escalação ✅, 5.5 polish ✅, 5.6 refresh indicator ✅, 5.7 remarcar/cancelar UI ✅ — 2026-06-04) |
 
 > Ordem recomendada: **1 → 2 → 5 → 3 → 4**. Conversa e agendamento são o coração;
 > o dashboard é o que impressiona na tela; escalação e knowledge são refinamento.
@@ -260,11 +260,11 @@ na frente do cliente.
 - **Aceite:** Slots ofertados respeitam o buffer em torno de eventos ocupados.
 
 ### Critérios de aceite do PILAR 2
-- [ ] Durações por procedimento corretas
-- [ ] Preferência manhã/tarde respeitada
-- [ ] 3 opções variadas e bem distribuídas
-- [ ] Demo funciona 100% sem Google Calendar (fallback)
-- [ ] `create_pending_appointment` notifica recepcionista e aparece no dashboard
+- [x] Durações por procedimento corretas
+- [x] Preferência manhã/tarde respeitada
+- [x] 3 opções variadas e bem distribuídas
+- [x] Demo funciona 100% sem Google Calendar (fallback)
+- [x] `create_pending_appointment` notifica recepcionista e aparece no dashboard
 
 ---
 
@@ -319,10 +319,10 @@ e isso aparece de forma clara para a recepcionista (e no dashboard).
 - **Aceite:** Painel de escalações com motivo/categoria e timestamp.
 
 ### Critérios de aceite do PILAR 3
-- [ ] 5 categorias disparando corretamente
-- [ ] Frustração/repetição detectada
-- [ ] Handoff + retorno com mensagens claras
-- [ ] Escalações visíveis no dashboard com categoria
+- [x] 5 categorias disparando corretamente (`medica`, `reclamacao`, `pedido_humano`, `confusao_repetida`, `fora_escopo`)
+- [x] Frustração/repetição detectada (regra dos 3 turnos + sinais de irritação no prompt)
+- [x] Handoff + retorno com mensagens claras ("Um momento! 🙏" + "Voltei! 😊" ao expirar TTL)
+- [ ] Escalações visíveis no dashboard com categoria (depende de endpoint — ver dashboard)
 
 ---
 
@@ -477,12 +477,12 @@ produto profissional, com dados vivos e métricas que provam ROI (a Lara trabalh
 - **Nota de sequência:** Esta tarefa depende de Pilar 2 estar com slots/agendamentos fluindo bem. Também requer que o prompt da Lara (Pilar 1) aprenda a oferecer remarcar/cancelar quando cliente mencionar — isso é uma **sub-tarefa do Pilar 1** (Tarefa 1.6, a adicionar).
 
 ### Critérios de aceite do PILAR 5
-- [ ] Dashboard nunca aparece vazio na demo (seed)
-- [ ] Overview com KPIs de ROI
-- [ ] Métricas contam a história completa do funil
-- [ ] Conversas com visual de chat
-- [ ] Loading/empty/error tratados
-- [ ] Remarcar e cancelar agendamentos: UI completa + recepcionista pode confirmar/rejeitar
+- [x] Dashboard nunca aparece vazio na demo (seed)
+- [x] Overview com KPIs de ROI (taxa de conversão, pendentes, confirmados, contatos)
+- [x] Métricas contam a história completa do funil (rota /metricas, drop-off %, procedimentos, horários de pico)
+- [x] Conversas com visual de chat + badge de escalação + filtro de escaladas
+- [x] Loading/empty/error tratados + refresh indicator em todas as páginas
+- [x] Remarcar e cancelar agendamentos: UI completa + recepcionista pode confirmar/rejeitar
 
 ---
 

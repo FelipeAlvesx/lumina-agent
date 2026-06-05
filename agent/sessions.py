@@ -107,6 +107,7 @@ def _get_conn() -> sqlite3.Connection:
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             phone      TEXT NOT NULL,
             reason     TEXT NOT NULL DEFAULT '',
+            category   TEXT NOT NULL DEFAULT 'pedido_humano',
             created_at REAL NOT NULL
         )
     """)
@@ -204,7 +205,8 @@ def get_recent_conversations(limit: int = 50) -> list[dict]:
         """SELECT s.phone, MAX(s.ts) as last_ts,
                   (SELECT content FROM sessions s2 WHERE s2.phone = s.phone ORDER BY s2.ts DESC LIMIT 1) as last_msg,
                   (SELECT role    FROM sessions s2 WHERE s2.phone = s.phone ORDER BY s2.ts DESC LIMIT 1) as last_role,
-                  (SELECT value   FROM lead_data l  WHERE l.phone  = s.phone AND l.field = 'nome' LIMIT 1) as nome
+                  (SELECT value   FROM lead_data l  WHERE l.phone  = s.phone AND l.field = 'nome' LIMIT 1) as nome,
+                  EXISTS(SELECT 1 FROM escalations e WHERE e.phone = s.phone) as escalated
            FROM sessions s
            GROUP BY s.phone
            ORDER BY last_ts DESC
@@ -219,6 +221,7 @@ def get_recent_conversations(limit: int = 50) -> list[dict]:
             "last_message": row[2] or "",
             "last_role":    row[3] or "",
             "last_ts":      _ts_to_iso(row[1]) if row[1] else None,
+            "escalated":    bool(row[5]),
         }
         for row in rows
     ]
@@ -415,11 +418,40 @@ def get_confirmed_appointments_tomorrow() -> list[dict]:
 
 # ── Escalations ───────────────────────────────────────────────────────────────
 
-def log_escalation(phone: str, reason: str = "") -> None:
+def get_recent_escalations(limit: int = 50) -> list[dict]:
     conn = _get_conn()
+    try:
+        conn.execute("ALTER TABLE escalations ADD COLUMN category TEXT NOT NULL DEFAULT 'pedido_humano'")
+        conn.commit()
+    except Exception:
+        pass
+    cur = conn.execute(
+        """
+        SELECT e.id, e.phone, e.reason, e.category, e.created_at,
+               ld.value AS nome
+        FROM escalations e
+        LEFT JOIN lead_data ld ON ld.phone = e.phone AND ld.field = 'nome'
+        ORDER BY e.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = cur.fetchall()
+    cols = [d[0] for d in cur.description]
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def log_escalation(phone: str, reason: str = "", category: str = "pedido_humano") -> None:
+    conn = _get_conn()
+    try:
+        conn.execute("ALTER TABLE escalations ADD COLUMN category TEXT NOT NULL DEFAULT 'pedido_humano'")
+        conn.commit()
+    except Exception:
+        pass
     conn.execute(
-        "INSERT INTO escalations (phone, reason, created_at) VALUES (?, ?, ?)",
-        (phone, reason, time.time()),
+        "INSERT INTO escalations (phone, reason, category, created_at) VALUES (?, ?, ?, ?)",
+        (phone, reason, category, time.time()),
     )
     conn.commit()
     conn.close()

@@ -4,6 +4,7 @@ import { Overview } from './pages/Overview'
 import { Appointments } from './pages/Appointments'
 import { Contacts } from './pages/Contacts'
 import { Conversations } from './pages/Conversations'
+import { Metrics } from './pages/Metrics'
 import { Servicos } from './pages/Servicos'
 import { Profissionais } from './pages/Profissionais'
 import { Configuracoes } from './pages/Configuracoes'
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/agendamentos"   element={<Appointments />} />
           <Route path="/profissionais"  element={<Profissionais />} />
           <Route path="/conversas"      element={<Conversations />} />
+          <Route path="/metricas"       element={<Metrics />} />
           <Route path="/configuracoes"  element={<Configuracoes />} />
           {/* Legacy routes */}
           <Route path="/appointments"  element={<Appointments />} />

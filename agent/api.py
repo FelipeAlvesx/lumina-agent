@@ -14,6 +14,7 @@ from sessions import (
     get_appointment, update_appointment, create_appointment,
     get_all_services, create_service, update_service, delete_service,
     get_all_professionals, create_professional, update_professional, delete_professional,
+    get_recent_escalations,
 )
 from gcal import confirm_event, confirm_event_with_new_slot, delete_event
 from evolution import send_message
@@ -304,6 +305,26 @@ def cancel_appointment_endpoint(appointment_id: int):
 
     update_appointment(appointment_id, status="cancel_requested", notes=notes)
     return jsonify({"ok": True, "status": "cancel_requested"})
+
+
+@api_bp.route("/escalations", methods=["GET", "OPTIONS"])
+def escalations():
+    if request.method == "OPTIONS":
+        return _cors(jsonify({}))
+    limit = int(request.args.get("limit", 50))
+    data = get_recent_escalations(limit=limit)
+    result = [
+        {
+            "id":         row["id"],
+            "phone":      row["phone"],
+            "nome":       row.get("nome") or None,
+            "reason":     row["reason"],
+            "category":   row["category"],
+            "created_at": _fmt_ts(row["created_at"]),
+        }
+        for row in data
+    ]
+    return jsonify({"escalations": result, "count": len(result)})
 
 
 @api_bp.route("/services", methods=["GET", "POST", "OPTIONS"])

@@ -9,14 +9,18 @@ interface State<T> {
 export function useFetch<T>(
   fetcher: () => Promise<T>,
   intervalMs = 30_000,
-): State<T> & { refetch: () => void } {
+): State<T> & { refetch: () => void; lastUpdated: Date | null } {
   const [state, setState] = useState<State<T>>({ data: null, loading: true, error: null })
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const fetcherRef = useRef(fetcher)
   fetcherRef.current = fetcher
 
   const load = useCallback(() => {
     fetcherRef.current()
-      .then((data) => setState({ data, loading: false, error: null }))
+      .then((data) => {
+        setState({ data, loading: false, error: null })
+        setLastUpdated(new Date())
+      })
       .catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e)
         setState((s) => ({ ...s, loading: false, error: msg }))
@@ -29,5 +33,5 @@ export function useFetch<T>(
     return () => clearInterval(id)
   }, [load, intervalMs])
 
-  return { ...state, refetch: load }
+  return { ...state, refetch: load, lastUpdated }
 }

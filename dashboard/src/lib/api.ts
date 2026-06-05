@@ -54,6 +54,7 @@ export interface ConversationSummary {
   last_message: string
   last_role: 'user' | 'assistant'
   last_ts: string | null
+  escalated: boolean
 }
 
 export interface Service {
@@ -75,6 +76,15 @@ export interface Professional {
   appointments_count: number
   services_count: number
   active: boolean
+}
+
+export interface Escalation {
+  id: number
+  phone: string
+  nome: string | null
+  reason: string
+  category: 'medica' | 'reclamacao' | 'pedido_humano' | 'confusao_repetida' | 'fora_escopo'
+  created_at: string
 }
 
 export interface ClinicConfig {
@@ -187,6 +197,10 @@ export const api = {
 
   deleteProfessional: (id: number) =>
     request<{ ok: boolean }>(`/api/professionals/${id}`, { method: 'DELETE' }),
+
+  // Escalations
+  getEscalations: (limit = 50) =>
+    request<{ escalations: Escalation[]; count: number }>(`/api/escalations?limit=${limit}`).then((r) => r.escalations),
 
   // Config
   getConfig: () =>
